@@ -91,3 +91,7 @@ core.*
 # python files
 *.egg-info
 __pycache__
+
+# Ignore pyenv and jenv related files
+.java-version
+.python-version
