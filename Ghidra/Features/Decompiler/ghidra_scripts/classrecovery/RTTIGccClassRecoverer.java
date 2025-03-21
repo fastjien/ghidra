@@ -2285,7 +2285,13 @@ public class RTTIGccClassRecoverer extends RTTIClassRecoverer {
 			monitor.checkCancelled();
 
 			if (specialTypeinfo.isInProgramMemory()) {
-				applyTypeinfoStructure(siClassTypeInfoStructure, specialTypeinfo.getAddress());
+				Data struct =
+					applyTypeinfoStructure(siClassTypeInfoStructure, specialTypeinfo.getAddress());
+				if (struct == null) {
+					Msg.error(this,
+						specialTypeinfo.getNamespace().getName() + ": cannot apply structure");
+					continue;
+				}
 				typeinfoToStructuretypeMap.put(specialTypeinfo.getAddress(),
 					SI_CLASS_TYPE_INFO_STRUCTURE);
 			}
@@ -2332,6 +2338,12 @@ public class RTTIGccClassRecoverer extends RTTIClassRecoverer {
 				// test if creating the pointer at typeinfoAddress would overlap anything
 				// else and skip if so
 				if (!canContainPointer(typeinfoAddress)) {
+					continue;
+				}
+
+				// test to see if there is a string at the typeinfo name location in the would be
+				// typeinfo structure
+				if (!hasStringAtTypeinfoNameLocation(typeinfoAddress)) {
 					continue;
 				}
 
@@ -2428,6 +2440,36 @@ public class RTTIGccClassRecoverer extends RTTIClassRecoverer {
 		updateTypeinfosWithBases(typeinfos, typeinfoMap);
 
 		return typeinfos;
+	}
+
+	/**
+	 * Method to validate the second member of the typeinfo struct is a string
+	 * @param typeinfoAddress the address of the potential typeinfo struct
+	 * @return true if what is pointed to by the typeinfoName pointer is a valid string, false otherwise
+	 */
+	private boolean hasStringAtTypeinfoNameLocation(Address typeinfoAddress) {
+
+		// first get the referenced address and verify it is an address
+		Address typeinfoNameAddress =
+			extendedFlatAPI.getPointer(typeinfoAddress.add(defaultPointerSize));
+		if (typeinfoNameAddress == null) {
+			return false;
+		}
+
+		// get defined string if defined already
+		String definedString = getDefinedStringAt(typeinfoNameAddress);
+		if (definedString != null) {
+			return true;
+		}
+
+		// get string from memory if not defined to see if ascii there
+		String stringInMem = getStringFromMemory(typeinfoNameAddress);
+		if (stringInMem != null) {
+			return true;
+		}
+
+		return false;
+
 	}
 
 	private GccTypeinfo getTypeinfo(String namespaceName, List<GccTypeinfo> typeinfos)
@@ -2725,13 +2767,19 @@ public class RTTIGccClassRecoverer extends RTTIClassRecoverer {
 
 	}
 
-	private Data applyTypeinfoStructure(Structure typeInfoStructure, Address typeinfoAddress)
-			throws CancelledException, AddressOutOfBoundsException, Exception {
+	private Data applyTypeinfoStructure(Structure typeInfoStructure, Address typeinfoAddress) {
 
-		api.clearListing(typeinfoAddress, typeinfoAddress.add(typeInfoStructure.getLength() - 1));
-		Data newStructure = api.createData(typeinfoAddress, typeInfoStructure);
+		try {
+			api.clearListing(typeinfoAddress,
+				typeinfoAddress.add(typeInfoStructure.getLength() - 1));
+			Data newStructure = api.createData(typeinfoAddress, typeInfoStructure);
+			return newStructure;
+		}
+		catch (CodeUnitInsertionException | CancelledException e) {
+			Msg.warn(this, "Could not apply typeinfo struct at " + typeinfoAddress.toString());
+			return null;
+		}
 
-		return newStructure;
 	}
 
 	private Structure getOrCreateVmiTypeinfoStructure(Address typeinfoAddress,
